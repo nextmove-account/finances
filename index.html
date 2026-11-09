@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Blocks every network request from this page (connect-src 'none'), so the app can't send your data anywhere. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; font-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a0a0b">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Finances">
+<title>Finances</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" class="app"></div>
+<input type="file" id="file-input" class="offscreen" tabindex="-1" aria-hidden="true" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple>
+<input type="file" id="backup-input" class="offscreen" tabindex="-1" aria-hidden="true" accept=".json,application/json">
+<input type="file" id="data-input" class="offscreen" tabindex="-1" aria-hidden="true">
+<noscript><p>Finances needs JavaScript to run. Nothing is sent anywhere either way.</p></noscript>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
