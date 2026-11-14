@@ -1,4 +1,4 @@
-# Finances (version 3)
+# Finances (version 3.1)
 
 A private finance dashboard. Your laptop imports your bank exports and keeps one data file in your Google Drive. Your iPhone shows that file.
 
@@ -51,7 +51,7 @@ If Google Drive isn't listed under Browse: open the Files app, tap Browse, tap t
 2. **Import files** and choose all three. Overlapping dates are fine: anything already imported is skipped.
 3. Clear **Review**.
 4. On **Check**, add this month's HSBC and Amex balances.
-5. On the *Investments & pension* card, click **Update** and type the Trading 212 value. Type the L&G value whenever you check it.
+5. In the **Net worth** section, click **Update values** and type the Trading 212 value. Type the L&G value whenever you check it.
 6. On the iPhone, tap **Load latest**.
 
 ## How it counts your money
@@ -62,7 +62,26 @@ If Google Drive isn't listed under Browse: open the Files app, tap Browse, tap t
 - **What she owes you** is a running total: bills you paid for her, plus settling-up money you sent, minus settling-up money she sent you.
 - **Salary:** the app expects the take-home you typed. With nothing typed, it uses the middle of your last three pay days. A pay day more than 12% above that is split into salary and bonus.
 - **Investments and pension** are the values you last typed in. There are no estimates.
+- **Net worth** adds up every stream: see the next section.
 - **What's counted:** on the overview, the arrow on *Left over* lists every line for the month, counted or not. Tap a line to see its transactions.
+
+## Net worth
+
+The overview lists every stream of money and adds up the ones that are switched on.
+
+- **HSBC and Revolut:** the latest balance on Check, plus everything imported after it. HSBC needs at least one balance typed on Check. Revolut reads its own.
+- **Amex:** what you owed at the latest balance on Check, plus purchases since, less payments since. It counts as a minus.
+- **Trading 212 and L&G pension:** the values you last typed in. The pension is marked as not available yet.
+- **Your sister:** money she owes you counts, but not as available. Money of hers that you're holding comes off what's available, because it's sitting in your accounts.
+- **Other money:** anything you add by hand, such as cash. Use a minus for money you owe. Tick "I can't get at it yet" for anything locked away.
+
+Tap a stream to switch it off or on. Three shortcuts sit at the top:
+
+- **Everything:** every stream.
+- **Available now:** leaves out the pension and anything else marked as not available yet.
+- **Day to day:** HSBC + Revolut − Amex.
+
+A stream with no value yet is listed as "not counted", never as zero. Which streams are switched on is remembered on each device and isn't saved to the data file.
 
 ## Check: is the data right?
 
@@ -91,7 +110,14 @@ Check tells you the import is complete. It doesn't tell you each transaction is 
 
 ## Updating the app
 
-Replace the files in the repository. Your data stays where it is. The app offers **Reload** when the new version is ready.
+You never need to set the repository up again.
+
+1. Open the repository on github.com and click **Add file → Upload files**.
+2. Drag in the new files. Files with the same name replace the old ones. Click **Commit changes**.
+3. Wait about a minute. On the laptop, open the app and click **Reload** when it's offered, or refresh the page twice.
+4. On the iPhone, close the app fully and open it again. Do that twice if the old version still shows.
+
+Your data, your settings and the link to the data file all stay as they are.
 
 ## Limits
 

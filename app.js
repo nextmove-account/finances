@@ -228,6 +228,7 @@
     view: 'overview', month: null, boardTab: 'bills', expand: {},
     tx: { q: '', month: '', acct: '', type: '', from: '', to: '' }, txLimit: 150,
     remember: true, chartTable: false, model: null, loaded: false,
+    nwOff: [],     // net worth streams switched off on this device (a view choice, never saved to the data file)
   };
   // Saves to this browser, then (on the laptop) to the shared data file.
   async function persist(opts) {
@@ -607,8 +608,9 @@
       monthSwitch()));
     out.push(banners());
     out.push(kpiRow(v, live));
+    out.push(netCard());
     out.push(boardSection(v));
-    out.push(h('div', { class: 'lower' }, sisterCard(v), investCard(v), trendCard(v)));
+    out.push(h('div', { class: 'lower two' }, sisterCard(v), trendCard(v)));
     return out;
   }
 
@@ -931,25 +933,105 @@
       }, H + AX));
   }
 
-  function investCard(v) {
-    const inv = v.investments;
-    const total = (inv.t212 ? inv.t212.value : 0) + (inv.pension ? inv.pension.value : 0);
-    const age = (b) => (b ? `typed in ${fmtDate(b.date)}` : 'not set');
-    const oldest = [inv.t212, inv.pension].filter(Boolean).map((b) => C.dayDiff(b.date, C.todayISO())).sort((a, b) => b - a)[0] || 0;
-    const update = VIEWER ? null : h('button', { class: 'link-btn', onclick: openBalances }, total ? 'Update them' : 'Add the current values');
-    const note = !total ? h('div', { class: 'note' }, icon('info', 15), h('span', null, 'Exports don’t include today’s value, so you type it in. ', update))
-      : oldest > 45 ? h('div', { class: 'note' }, icon('clock', 15), h('span', null, `These are the values you last typed in. The oldest is ${oldest} days old. `, update))
-        : h('div', { class: 'note' }, icon('info', 15), 'These are the values you last typed in from each app.');
-    return h('section', { class: 'card', 'aria-label': 'Investments and pension' },
-      h('div', { class: 'card-head' }, h('span', { class: 'ico', style: { background: 'var(--acct-t212)', color: '#0b0b0b' } }, icon('trend', 14)), 'Investments & pension',
-        h('span', { class: 'spacer' }), VIEWER ? null : h('button', { class: 'btn sm', onclick: openBalances }, icon('edit', 15), 'Update')),
-      h('div', { class: 'big-line' }, h('span', { class: 'v' }, total ? money(total, { pence: false }) : '—'), h('span', { class: 'k' }, total ? 'total value' : 'no values yet')),
-      h('div', { class: 'stat-rows' },
-        h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'Trading 212 ', h('small', { class: 'card-sub' }, `(${age(inv.t212)})`)), h('span', { class: 'v' }, inv.t212 ? money(inv.t212.value, { pence: false }) : '—')),
-        h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'L&G pension ', h('small', { class: 'card-sub' }, `(${age(inv.pension)})`)), h('span', { class: 'v' }, inv.pension ? money(inv.pension.value, { pence: false }) : '—')),
-        h('div', { class: 'stat-row' }, h('span', { class: 'k' }, `Sent to Trading 212 in ${fmtMonth(state.month, true)}`), h('span', { class: 'v' }, money(inv.thisMonth))),
-        inv.hasData ? h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'Dividends & interest this year'), h('span', { class: 'v good' }, money(inv.dividendsYTD + inv.interestYTD))) : null),
-      note);
+  /* --- net worth: every stream of money, switched on or off */
+  function netCard() {
+    const m = state.model;
+    const streams = m.net.streams;
+    const ids = streams.map((x) => x.id);
+    const offIds = state.nwOff.filter((id) => ids.includes(id));
+    const off = new Set(offIds);
+    const t = C.netTotal(streams, offIds);
+    const setOff = async (list) => { state.nwOff = list; await store.set('ui', { nwOff: list }); renderContent(); };
+    const daily = ['hsbc', 'revolut', 'amex'];
+    const presets = [
+      ['Everything', [], 'Every stream'],
+      ['Available now', streams.filter((x) => !x.avail).map((x) => x.id), 'Leaves out your pension and anything else you can’t get at yet'],
+    ];
+    if (streams.some((x) => daily.includes(x.id))) presets.push(['Day to day', ids.filter((id) => !daily.includes(id)), 'HSBC + Revolut − Amex']);
+    const same = (list) => list.length === off.size && list.every((id) => off.has(id));
+    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Which streams to include' },
+      presets.map(([label, list, title]) => h('button', { 'aria-pressed': same(list) ? 'true' : 'false', title, onclick: () => setOff(list) }, label)));
+    const badge = (x) => (x.other ? h('span', { class: 'badge sm', style: { background: 'var(--surface-4)', color: 'var(--text)' } }, icon('coins', 13))
+      : x.id === 'sister' ? h('span', { class: 'badge sm', style: { background: 'var(--violet-bg)', color: 'var(--violet)' } }, icon('users', 13))
+        : h('span', { class: `badge sm ${x.id}` }, icon(ACCT_ICON[x.id], 13)));
+    const sub = (x) => {
+      const locked = x.avail ? '' : ' · not available yet';
+      if (x.id === 'sister') return x.value > 0 ? 'Bills you’ve paid for her, not repaid yet' : 'Her money, sitting in your accounts';
+      if (x.value == null) return x.typed ? 'No value typed in yet' : 'Needs a balance on Check';
+      if (x.other) return `Added by you${x.asOf ? ' ' + fmtDate(x.asOf) : ''}${locked}`;
+      if (x.typed) return `Typed in ${fmtDate(x.asOf)}${locked}`;
+      return `${x.id === 'amex' ? 'Owed' : 'Balance'} at ${fmtDate(x.asOf)}${x.warn ? ' · doesn’t add up on Check' : ''}`;
+    };
+    const row = (x) => {
+      const on = !off.has(x.id);
+      return h('button', { class: 'nw-row', 'aria-pressed': on ? 'true' : 'false', 'aria-label': `${x.label}, ${x.value == null ? 'no value yet' : money(x.value)}, ${on ? 'included' : 'left out'}`,
+        onclick: () => setOff(on ? offIds.concat([x.id]) : offIds.filter((id) => id !== x.id)) },
+      h('span', { class: 'tick' }, on ? icon('check', 13) : null), badge(x),
+      h('span', { class: 'mid' }, h('span', { class: 'name' }, x.label), h('span', { class: 'sub' }, sub(x))),
+      h('span', { class: 'amt' + (x.value != null && x.value < 0 ? ' neg' : '') }, x.value == null ? '—' : money(x.value, { pence: false })));
+    };
+    let note = null;
+    if (t.missing.length) {
+      const needCheck = t.missing.filter((x) => !x.typed).map((x) => x.label);
+      const needTyped = t.missing.filter((x) => x.typed).map((x) => x.label);
+      const parts = [];
+      if (needCheck.length) parts.push(`${needCheck.join(' and ')} ${needCheck.length === 1 ? 'needs' : 'need'} one balance on Check`);
+      if (needTyped.length) parts.push(`${needTyped.join(' and ')} ${needTyped.length === 1 ? 'needs' : 'need'} a value typed in`);
+      note = h('div', { class: 'note' }, icon('alert', 15), h('span', null, `Not counted yet: ${parts.join(', and ')}. `,
+        VIEWER ? 'Add them on the laptop.' : needCheck.length ? h('button', { class: 'link-btn', onclick: () => go('check') }, 'Open Check') : h('button', { class: 'link-btn', onclick: openBalances }, 'Type them in')));
+    }
+    return h('section', { class: 'card networth', 'aria-label': 'Net worth' },
+      h('div', { class: 'card-head' }, h('span', { class: 'ico', style: { background: 'var(--accent-soft)', color: '#aab8ff' } }, icon('coins', 14)), 'Net worth',
+        h('span', { class: 'tag' }, 'Now'), h('span', { class: 'spacer' }), seg),
+      h('div', { class: 'nw-grid' },
+        h('div', { class: 'nw-total' },
+          h('div', { class: 'kpi-value hero' }, money(t.total, { pence: false })),
+          h('div', { class: 'kpi-label' }, off.size ? `${t.included} of ${t.of} streams included` : 'Every stream included'),
+          h('div', { class: 'stat-rows' },
+            h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'Available to you now'), h('span', { class: 'v', id: 'nw-available' }, money(t.available, { pence: false }))),
+            h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'Not available yet'), h('span', { class: 'v', id: 'nw-locked' }, money(t.locked, { pence: false })))),
+          note,
+          VIEWER ? null : h('div', { class: 'row-actions' }, h('button', { class: 'btn sm', onclick: openBalances }, icon('edit', 15), 'Update values'),
+            h('button', { class: 'btn sm', onclick: openOther }, icon('plus', 15), 'Other money'))),
+        h('div', { class: 'nw-streams' }, streams.map(row))));
+  }
+
+  // Other money: anything not in an export that should count towards net worth, such as cash.
+  function openOther() {
+    const s = state.settings;
+    const draft = s.other.map((o) => ({ id: o.id, name: o.name, value: String(o.value), locked: !!o.locked, date: o.date }));
+    const list = h('div', { class: 'other-list' });
+    const err = h('div', { class: 'err', role: 'alert' });
+    const draw = () => {
+      list.replaceChildren(...draft.map((o, i) => h('div', { class: 'other-row' },
+        h('label', { class: 'field' }, h('span', null, 'What it is'), h('input', { class: 'input', value: o.name, placeholder: 'e.g. Cash at home', maxlength: '60', oninput: (e) => { o.name = e.target.value; err.textContent = ''; } })),
+        h('label', { class: 'field amount' }, h('span', null, 'Amount (£)'), h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: '0.01', value: o.value, oninput: (e) => { o.value = e.target.value; o.touched = true; err.textContent = ''; } })),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: o.locked, onchange: (e) => { o.locked = e.target.checked; } }), 'I can’t get at it yet'),
+        h('button', { class: 'icon-btn', 'aria-label': `Remove ${o.name || 'this line'}`, onclick: () => { draft.splice(i, 1); draw(); } }, icon('trash', 17)))));
+      if (!draft.length) list.append(h('p', { class: 'card-sub', style: { margin: 0 } }, 'Nothing added yet.'));
+    };
+    draw();
+    sheet({
+      title: 'Other money', sub: 'Anything not in your exports that should count towards your net worth',
+      body: [list,
+        h('div', null, h('button', { class: 'btn', onclick: () => { draft.push({ id: 'o' + Date.now().toString(36) + draft.length, name: '', value: '', locked: false, date: null, touched: true }); draw(); const el = list.querySelector('.other-row:last-child input'); if (el) el.focus(); } }, icon('plus', 16), 'Add a line')),
+        h('p', { class: 'note', style: { marginTop: 0 } }, icon('info', 15), 'Use a minus for money you owe, such as a loan. Tick “I can’t get at it yet” for anything locked away, and it’s left out of “Available now”.'),
+        err],
+      foot: (close) => [h('button', { class: 'btn', onclick: close }, 'Cancel'), h('button', { class: 'btn primary', onclick: async () => {
+        const out = [];
+        for (const o of draft) {
+          const name = String(o.name || '').trim(), val = parseFloat(o.value);
+          if (!name && !String(o.value).trim()) continue;
+          if (!name) { err.textContent = 'Give each line a name.'; return; }
+          if (!Number.isFinite(val)) { err.textContent = `Type an amount for “${name}”.`; return; }
+          out.push({ id: o.id, name, value: C.round2(val), locked: !!o.locked, date: o.touched || !o.date ? C.todayISO() : o.date });
+        }
+        const snap = snapshot();
+        s.other = out;
+        await persist(); recompute(); close(); render();
+        toast('Other money saved.', () => restoreSnapshot(snap));
+      } }, 'Save')],
+    });
   }
 
   // Everything that moved in the month: what's counted, what isn't, and the transactions behind each line.
@@ -1390,11 +1472,12 @@
 
     const t212 = C.withDefaults(s).balances;
     const lastOf = (list) => (list && list.length ? [...list].sort((a, b) => (a.date < b.date ? 1 : -1))[0] : null);
-    const balances = card('set-balances', 'Values you update by hand', 'Exports don’t include today’s value of your investments or pension, so type them in when you check.',
+    const balances = card('set-balances', 'Values you update by hand', 'Exports don’t include today’s value of your investments or pension, so type them in when you check. Other money is anything else you want in your net worth, like cash.',
       h('div', { class: 'stat-rows' },
         h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'Trading 212'), h('span', { class: 'v' }, lastOf(t212.t212) ? `${money(lastOf(t212.t212).value)} · ${fmtDate(lastOf(t212.t212).date, true)}` : 'Not set')),
         h('div', { class: 'stat-row' }, h('span', { class: 'k' }, 'L&G pension'), h('span', { class: 'v' }, lastOf(t212.pension) ? `${money(lastOf(t212.pension).value)} · ${fmtDate(lastOf(t212.pension).date, true)}` : 'Not set'))),
-      h('div', { class: 'row-actions' }, h('button', { class: 'btn', onclick: openBalances }, icon('edit', 16), 'Update values')));
+      h('div', { class: 'row-actions' }, h('button', { class: 'btn', onclick: openBalances }, icon('edit', 16), 'Update values'),
+        h('button', { class: 'btn', onclick: openOther }, icon('coins', 16), s.other.length ? `Other money (${s.other.length})` : 'Add other money')));
 
     const rulesCard = card('set-rules', 'Your rules', 'Created when you tick “remember”. Newest wins.',
       s.rules.length ? h('div', null, [...s.rules].reverse().map((r) => h('div', { class: 'rule-line' },
@@ -1442,7 +1525,7 @@
           h('li', null, h('strong', null, 'Works offline. '), 'After the first visit it loads without internet.'),
           VIEWER ? null : h('li', null, h('strong', null, 'On iPhone: '), 'open the link in Safari, tap Share, then “Add to Home Screen”. Then tap “Load latest”.'),
           h('li', null, h('strong', null, 'Lock your devices. '), 'The data is as private as the devices and the Google account it’s on.'),
-          h('li', null, h('strong', null, 'Version 3. '), VIEWER ? 'This device is view only.' : 'The laptop edits; the iPhone views.'))));
+          h('li', null, h('strong', null, 'Version 3.1. '), VIEWER ? 'This device is view only.' : 'The laptop edits; the iPhone views.'))));
   }
   // View only: where the data came from and how to refresh it.
   function viewData() {
@@ -1764,7 +1847,7 @@
         await store.clear();
         if (keep) await store.set('fileHandle', keep); else { sync.handle = null; sync.status = 'none'; }
         state.txns = []; state.settings = C.defaultSettings(); state.meta = { imports: [], demo: false, revolutBalance: null };
-        state.month = null; state.view = 'overview';
+        state.month = null; state.view = 'overview'; state.nwOff = [];
         recompute(); close(); render(); toast('Erased.');
       } }, icon('trash', 16), 'Erase')],
     });
@@ -1974,7 +2057,8 @@
   /* ================================================================== boot */
   async function boot() {
     document.body.classList.toggle('viewer', VIEWER);
-    const [txns, settings, meta, handle] = await Promise.all([store.get('txns'), store.get('settings'), store.get('meta'), store.get('fileHandle')]);
+    const [txns, settings, meta, handle, ui] = await Promise.all([store.get('txns'), store.get('settings'), store.get('meta'), store.get('fileHandle'), store.get('ui')]);
+    if (ui && Array.isArray(ui.nwOff)) state.nwOff = ui.nwOff.filter((x) => typeof x === 'string');
     state.txns = Array.isArray(txns) ? txns : [];
     state.settings = C.withDefaults(settings);
     state.meta = Object.assign({ imports: [], demo: false, revolutBalance: null }, meta || {});

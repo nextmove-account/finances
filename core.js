@@ -1,4 +1,4 @@
-/* Finances core (version 3): parsing, classification and analysis.
+/* Finances core (version 3.1): parsing, classification and analysis.
    Pure logic: no DOM rendering and no network. Runs in the browser and in Node (for tests). */
 (function (root) {
   'use strict';
@@ -661,6 +661,7 @@
       billOverrides: {}, budgets: {},
       balances: { t212: [], pension: [] },
       checks: { hsbc: [], amex: [], revolut: [] },   // balances from your statements, to check the imported data against
+      other: [],               // other money you add by hand for net worth: { id, name, value, locked, date }
       rules: [], edits: {},
     };
   }
@@ -675,6 +676,9 @@
         .filter((p) => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && Number.isFinite(Number(p.value)))
         .map((p) => (p.auto ? { date: p.date, value: Number(p.value), auto: true } : { date: p.date, value: Number(p.value) }));
     }
+    out.other = (Array.isArray(out.other) ? out.other : [])
+      .filter((o) => o && String(o.name || '').trim() && Number.isFinite(Number(o.value)))
+      .map((o, i) => ({ id: String(o.id || 'o' + i), name: String(o.name).trim().slice(0, 60), value: round2(Number(o.value)), locked: !!o.locked, date: /^\d{4}-\d{2}-\d{2}$/.test(o.date || '') ? o.date : null }));
     // Earlier versions kept salary, tax and pension settings and savings goals. Only the typed take-home is used now.
     out.pay = Number(out.pay.takeHome) > 0 ? { takeHome: Number(out.pay.takeHome) } : {};
     delete out.goals;
@@ -844,15 +848,18 @@
    * Between two balances, the transactions in between must add up to the change.
    * A balance is as at the end of its day. Amex balances are what you owe, so they move the other way.
    */
+  function checkPoints(s, a) {
+    const byDate = new Map();
+    for (const p of ((s.checks || {})[a] || [])) {
+      const have = byDate.get(p.date);
+      if (!have || !p.auto || have.auto) byDate.set(p.date, p);        // a balance you typed beats one read from a file
+    }
+    return [...byDate.values()].sort((x, y) => (x.date < y.date ? -1 : 1));
+  }
   function balanceChecks(txns, s) {
     const out = {};
     for (const a of CHECK_ACCTS) {
-      const byDate = new Map();
-      for (const p of ((s.checks || {})[a] || [])) {
-        const have = byDate.get(p.date);
-        if (!have || !p.auto || have.auto) byDate.set(p.date, p);      // a balance you typed beats one read from a file
-      }
-      const points = [...byDate.values()].sort((x, y) => (x.date < y.date ? -1 : 1));
+      const points = checkPoints(s, a);
       const list = txns.filter((t) => t.acct === a && (t.cur || 'GBP') === 'GBP');
       const dates = list.map((t) => t.date).sort();
       const cover = dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null;
@@ -874,6 +881,49 @@
         status: !list.length ? 'nodata' : points.length < 2 ? (points.length ? 'one' : 'none') : bad.length ? 'off' : 'ok' };
     }
     return out;
+  }
+
+  /* ------------------------------------------------------------------ net worth */
+  /**
+   * What each stream of money is worth now.
+   * A bank or card balance is the latest balance on Check plus everything imported after it, so it needs at least one balance.
+   * Amex is money you owe, so it counts as a minus. `avail` says whether you can get at the money today.
+   */
+  function netWorth(txns, s, sisterBalance, checks) {
+    const streams = [];
+    for (const a of CHECK_ACCTS) {
+      const list = txns.filter((t) => t.acct === a && (t.cur || 'GBP') === 'GBP');
+      const points = checkPoints(s, a);
+      if (!list.length && !points.length) continue;
+      const sign = a === 'amex' ? -1 : 1;
+      const p = points[points.length - 1];
+      let value = null, asOf = null;
+      if (p) {
+        const after = list.filter((t) => t.date > p.date);
+        value = round2(sign * p.value + after.reduce((x, t) => x + t.amount, 0));
+        asOf = after.reduce((d, t) => (t.date > d ? t.date : d), p.date);
+      }
+      streams.push({ id: a, label: ACCOUNTS[a].label, value, asOf, avail: true, warn: !!(checks && checks[a] && checks[a].status === 'off') });
+    }
+    const t212 = latestBalance(s.balances.t212), pension = latestBalance(s.balances.pension);
+    streams.push({ id: 't212', label: 'Trading 212', value: t212 ? round2(t212.value) : null, asOf: t212 ? t212.date : null, avail: true, typed: true });
+    streams.push({ id: 'pension', label: 'L&G pension', value: pension ? round2(pension.value) : null, asOf: pension ? pension.date : null, avail: false, typed: true });
+    const bal = round2(Number(sisterBalance) || 0);
+    if ((s.sisterNames || []).length && (s.sisterPays || []).length && Math.abs(bal) >= 0.005) {
+      // Money she owes you isn't in your accounts yet. Money of hers you're holding is in your accounts but isn't yours.
+      streams.push({ id: 'sister', label: bal > 0 ? 'Owed by your sister' : 'Held for your sister', value: bal, asOf: null, avail: bal < 0 });
+    }
+    for (const o of (s.other || [])) streams.push({ id: 'other:' + o.id, label: o.name, value: o.value, asOf: o.date, avail: !o.locked, other: true });
+    return { streams };
+  }
+  /** Adds up the streams that are switched on. Streams with no value yet are listed as missing, not counted as zero. */
+  function netTotal(streams, offIds) {
+    const off = new Set(offIds || []);
+    const on = streams.filter((x) => !off.has(x.id));
+    const known = on.filter((x) => x.value != null);
+    const sum = (l) => round2(l.reduce((a, x) => a + x.value, 0));
+    return { total: sum(known), available: sum(known.filter((x) => x.avail)), locked: sum(known.filter((x) => !x.avail)),
+      included: on.length, of: streams.length, missing: on.filter((x) => x.value == null) };
   }
 
   /* ------------------------------------------------------------------ the shared data file */
@@ -1053,9 +1103,10 @@
       .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
 
     const review = txns.filter((t) => t.review).sort((a, b) => (a.date < b.date ? 1 : -1));
+    const checks = balanceChecks(txns, s);
 
     return { empty: false, today, txns, months, byMonth, sister, bills, coverage, asOfBy, salaryDay, salaryAcct, expectedSalary,
-      inv, revolutBalance: revBal ? { date: revBal.date, value: revBal.bal } : null, review, checks: balanceChecks(txns, s), settings: s };
+      inv, revolutBalance: revBal ? { date: revBal.date, value: revBal.bal } : null, review, checks, net: netWorth(txns, s, sister.balance, checks), settings: s };
   }
 
   /** Everything the dashboard needs for one month. */
@@ -1183,7 +1234,7 @@
     // pay and people
     expectedPay, nameMatches,
     // balance checks and the shared data file
-    CHECK_ACCTS, balanceChecks, mergeAutoChecks, packData, readData,
+    CHECK_ACCTS, balanceChecks, mergeAutoChecks, packData, readData, netWorth, netTotal,
     // date utils
     addMonths, addDays, monthRange, monthOf, dayDiff, daysInMonth, todayISO, round2,
   };

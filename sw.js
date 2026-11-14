@@ -1,5 +1,5 @@
 /* Offline support: caches the app's own files. Never touches your data, and never fetches anything from other sites. */
-const CACHE = 'finances-v3';
+const CACHE = 'finances-v3-1';
 const ASSETS = ['./', 'index.html', 'styles.css', 'core.js', 'app.js', 'demo.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
